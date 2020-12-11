@@ -8,15 +8,16 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.preprocessing import image
 import matplotlib.pyplot as plt
 import os
+from tensorflow.keras.backend import exp, square, sqrt, shape, mean, random_normal
 
-latent_dim = 16
+latent_dim = 4
 channels = 1
 height = width = 28
 
 def sampling(mean_stddev_layer):
   mean, std_dev = mean_stddev_layer
-  sample = tf.keras.backend.random_normal(shape=tf.keras.backend.shape(mean),mean=0.0,stddev=1.0)
-  random_sample = mean + tf.keras.backend.exp(std_dev/2) * sample
+  sample = random_normal(shape(mean),mean=0.0,stddev=1.0)
+  random_sample = mean + exp(std_dev/2) * sample
   return random_sample
 
 def encoder():
@@ -41,7 +42,7 @@ def encoder():
   x_stddev = Dense(latent_dim)(x)
   output_layer = Lambda(sampling,name='encoder_output')([x_mean,x_stddev])
   encoder = Model(input_layer,output_layer,name='encoder')
-  print(encoder.summary())
+  # print(encoder.summary())
   return encoder,x_mean,x_stddev
 
 def decoder():
@@ -62,31 +63,31 @@ def decoder():
   x = LeakyReLU()(x)
 
   decoder = Model(input_layer,x,name='decoder')
-  print(decoder.summary())
+  # print(decoder.summary())
   return decoder
 
 def loss_func(encoder_mu, encoder_log_variance):
-    def vae_reconstruction_loss(y_true, y_predict):
+  return vae_loss
+
+def vae_reconstruction_loss(y_true, y_predict):
         reconstruction_loss_factor = 1000
-        reconstruction_loss = tf.keras.backend.mean(tf.keras.backend.square(y_true-y_predict), axis=[1, 2, 3])
+        reconstruction_loss = mean(square(y_true-y_predict), axis=[1, 2, 3])
         return reconstruction_loss_factor * reconstruction_loss
 
-    def vae_kl_loss(encoder_mu, encoder_log_variance):
-        kl_loss = -0.5 * tf.keras.backend.sum(1.0 + encoder_log_variance - tf.keras.backend.square(encoder_mu) - tf.keras.backend.exp(encoder_log_variance), axis=1)
+def vae_kld_loss(encoder_mu, encoder_log_variance):
+        kl_loss = -0.5 * tf.keras.backend.sum(1.0 + encoder_log_variance - square(encoder_mu) - exp(encoder_log_variance), axis=1)
         return kl_loss
 
-    def vae_kl_loss_metric(y_true, y_predict):
-        kl_loss = -0.5 * tf.keras.backend.sum(1.0 + encoder_log_variance - tf.keras.backend.square(encoder_mu) - tf.keras.backend.exp(encoder_log_variance), axis=1)
+def vae_kld_loss_metric(y_true, y_predict):
+        kl_loss = -0.5 * tf.keras.backend.sum(1.0 + encoder_log_variance - square(encoder_mu) - exp(encoder_log_variance), axis=1)
         return kl_loss
 
-    def vae_loss(y_true, y_predict):
+def vae_loss(y_true, y_predict):
         reconstruction_loss = vae_reconstruction_loss(y_true, y_predict)
-        kl_loss = vae_kl_loss(y_true, y_predict)
+        kl_loss = vae_kld_loss(y_true, y_predict)
 
         loss = reconstruction_loss + kl_loss
         return loss
-
-    return vae_loss
 def VAE(encoder,decoder,x_mean,x_stddev):
   input_layer = tf.keras.layers.Input(shape=(28,28,1))
   x = encoder(input_layer)
@@ -96,17 +97,68 @@ def VAE(encoder,decoder,x_mean,x_stddev):
   vae.compile(optimizer=opt,loss=loss_func(x_mean,x_stddev))
   return vae
 
-(x_train, y_train), (x_test, y_test) = mnist.load_data() 
-x_train = x_train.astype("float32") / 255.0 
-x_test = x_test.astype("float32") / 255.0
+def load_dataset():
+  (x_train, y_train), (x_test, y_test) = mnist.load_data() 
+  x_train = x_train.astype("float32") / 255.0 
+  x_test = x_test.astype("float32") / 255.0
+  x_train = tf.reshape(x_train,(x_train.shape[0], x_train.shape[1], x_train.shape[2], 1)) 
+  x_test = tf.reshape(x_test,(x_test.shape[0], x_train.shape[1], x_train.shape[2], 1))
+  return x_train,x_test,y_test
 
-x_train = np.reshape(x_train, newshape=(x_train.shape[0], x_train.shape[1], x_train.shape[2], 1)) 
-x_test = np.reshape(x_test, newshape=(x_test.shape[0], x_train.shape[1], x_train.shape[2], 1))
+def train(num_epochs = 100,batch_size = 32, shuffle = False):
+  encoder_model,x_mean,x_stddev = encoder()
+  decoder_model = decoder()
+  vae = VAE(encoder_model,decoder_model,x_mean,x_stddev)
 
-encoder_model,x_mean,x_stddev = encoder()
-decoder_model = decoder()
-vae = VAE(encoder_model,decoder_model,x_mean,x_stddev)
+  history = vae.fit(x_train, x_train, epochs=num_epochs, batch_size=batch_size, shuffle=shuffle, validation_data=(x_test, x_test))
+  plot_loss(history)
+  # print(history.history.keys())
+  encoded_data = encoder_model.predict(x_test)
+  decoded_data = decoder_model.predict(encoded_data)
+  return decoded_data,encoded_data
 
-vae.fit(x_train, x_train, epochs=20, batch_size=32, shuffle=True, validation_data=(x_test, x_test))
-encoded_data = encoder_model.predict(x_test)
-decoded_data = decoder_model.predict(encoded_data)
+def plot_loss(history):
+  plt.plot(history.history['loss'],'-b')
+  plt.plot(history.history['val_loss'],'-r')
+  plt.title('model loss')
+  plt.ylabel('loss')
+  plt.xlabel('epoch')
+  plt.legend(['train', 'test'], loc='upper left')
+  plt.savefig("VAE_LOSSES.png")
+  plt.close()
+
+def save_plots(generated_images):
+  fig=plt.figure(figsize=(5, 5))
+  for i in range(0, 5*5):
+      image = tf.reshape(generated_images[-i],(28,28))
+      fig.add_subplot(5, 5, 1+i)
+      plt.axis('off')
+      plt.imshow(image,cmap='gray')
+  plt.savefig("Generated_VAE.png")
+  plt.close()
+ 
+def save_plots_real(generated_images):
+  fig=plt.figure(figsize=(5, 5))
+  for i in range(0, 5*5):
+      image = tf.reshape(generated_images[-i],(28,28))
+      fig.add_subplot(5, 5, 1+i)
+      plt.axis('off')
+      plt.imshow(image,cmap='gray')
+  plt.savefig("Real_VAE.png")
+  plt.close()
+ 
+def draw_distribution(encoded_data,y_test):
+  plt.figure(figsize=(6, 6))
+  plt.scatter(encoded_data[:, 0], encoded_data[:, 1], c=y_test)
+  plt.colorbar()
+  plt.savefig("Distributions.png")
+  plt.close()
+
+
+
+x_train,x_test,y_test = load_dataset()
+generated_images,encoded_data = train(num_epochs=100,batch_size=32,shuffle=True)
+save_plots(generated_images)
+save_plots_real(x_test)
+draw_distribution(encoded_data,y_test)
+

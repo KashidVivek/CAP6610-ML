@@ -42,8 +42,8 @@ def define_discriminator():
 
 def define_generator():
 	model = Sequential(name='GEN')
-	model.add(Dense(64*7*7,input_dim=LATENT_DIM))
-	model.add(LeakyReLU())
+	# model.add(Dense(64*7*7,input_dim=LATENT_DIM))
+	# model.add(LeakyReLU())
  
 	model.add(Dense(128*7*7))
 	model.add(LeakyReLU())
@@ -68,27 +68,73 @@ def define_GAN(generator,discriminator):
 	model.add(generator)
 	model.add(discriminator)
 	opt = tf.keras.optimizers.Adam(lr=0.0004, beta_1=0.5)
-	model.compile(loss='binary_crossentropy',optimizer=opt)
+	model.compile(loss='binary_crossentropy',optimizer=opt,metrics=['accuracy'])
 	return model
 
 
 def load_dataset():
 	(real_images,real_labels),(_,_) = mnist.load_data()
-	real_images = real_images[real_labels.flatten() == 6]
+	# real_images = real_images[real_labels.flatten() == 6]
 	real_images = real_images.reshape((real_images.shape[0],)+(HEIGHT,WIDTH,CHANNELS)).astype('float32') / 255.
 	return real_images
+
+def save_plots(generated_images,k):
+	fig=plt.figure(figsize=(5, 5))
+	for i in range(0, 5*5):
+			image = tf.reshape(generated_images[i],(28,28))
+			fig.add_subplot(5, 5, 1+i)
+			plt.axis('off')
+			plt.imshow(image,cmap='gray')
+	# plt.imsave(f"epoch_{k}_GAN.png",image)
+	plt.savefig(f"epoch_{k}_GAN.png")
+	plt.close()
+
+def draw_loss_plots(dl,gl):
+	title = "Losses Compared"
+	epochs = range(1, len(dl)+1)
+	plt.plot(epochs,dl, '-b',marker='o', label='Discriminator loss')
+	plt.plot(epochs,gl, '-r', marker='o',label='GAN Loss')
+	plt.xticks(np.arange(0,len(epochs)+1,5))
+	plt.xlabel("Epochs")
+	plt.legend(loc='upper right')
+	plt.title(title)
+
+	# save image
+	plt.savefig(title+".png")
+	plt.close()
+
+
+def draw_discriminator_accuracy(real,fake):
+	title = "Real vs Fake Accuracy"
+	epochs = range(1, len(real)+1)
+	plt.plot(epochs,real, '-b',marker='o', label='Accuracy on Real image')
+	plt.plot(epochs,fake, '-r', marker='o',label='Accuracy on Fake image')
+	plt.xticks(np.arange(0,len(epochs)+1,5))
+	plt.xlabel("Epochs")
+	plt.legend(loc='upper right')
+	plt.title(title)
+
+	# save image
+	plt.savefig(title+".png")
+	plt.close()
+
+
 
 latent_dim = 100
 real_images = load_dataset()
 generator = define_generator()
 discriminator = define_discriminator()
 GAN = define_GAN(generator,discriminator)
-epochs = 20
+epochs = 100
 batch_size = 128
 batch_per_epoch = int(real_images.shape[0] / batch_size)
 save_dir = '/home/vivek/genData'
 images = []
 half_batch = batch_size // 2
+discriminator_losses = []
+GAN_losses = []
+discriminator_real_images_accuracy = []
+discriminator_fake_images_accuracy = []
 
 
 for i in range(epochs):
@@ -109,12 +155,25 @@ for i in range(epochs):
 
 		random_vectors_gan = tf.random.normal((batch_size*2,LATENT_DIM))
 		labels_gan = tf.ones([batch_size*2,1])
-		gan_loss = GAN.train_on_batch(random_vectors_gan,labels_gan)
+		gan_loss,_ = GAN.train_on_batch(random_vectors_gan,labels_gan)
 		print('>%d, %d/%d, d=%.3f, g=%.3f' % (i+1, j+1, batch_per_epoch, discriminator_loss, gan_loss))
-		
-	if i % 2 == 0:
+
+	if i == 0:
+		save_plots(generated_images,i)
+	
+	if i % 1 == 0:
 		(_,acc_real) = discriminator.evaluate(real_images_batch,real_labels)
 		(_,acc_fake) = discriminator.evaluate(generated_images,fake_labels)
 		print('>Accuracy real: %.0f%%, fake: %.0f%%' % (acc_real*100, acc_fake*100))
+		discriminator_real_images_accuracy.append(acc_real*100)
+		discriminator_fake_images_accuracy.append(acc_fake*100)
+		# save_plots(generated_images)
 		images.append(generated_images)
 
+	if i % 10 == 0:
+		save_plots(generated_images,i)
+	
+	discriminator_losses.append(discriminator_loss)
+	GAN_losses.append(gan_loss)
+draw_loss_plots(discriminator_losses,GAN_losses)
+draw_discriminator_accuracy(discriminator_real_images_accuracy,discriminator_fake_images_accuracy)
